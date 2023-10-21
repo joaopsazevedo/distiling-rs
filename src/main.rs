@@ -36,21 +36,30 @@ struct Solution {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ProblemState {
+    tiles: Vec<isize>,
+    score: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ProblemStateHelper {
+    tiles_kind_counter: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Problem {
     l: usize,
     c: usize,
     v: Strategy,
-    deleted_blocks: Vec<Coordinate>,
-    score: usize,
-    tiles: Vec<isize>,
-    tiles_kind_counter: Vec<usize>,
+    state: ProblemState,
+    state_helper: ProblemStateHelper,
 }
 
 impl Display for Problem {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for l in 0..self.l {
             for c in 0..self.c {
-                write!(f, "{} ", self.tiles[l * self.c + c])?;
+                write!(f, "{} ", self.state.tiles[l * self.c + c])?;
             }
             writeln!(f, "")?;
         }
@@ -84,20 +93,20 @@ impl Problem {
         if tiles.len() < c * l {
             bail!("Invalid problem definition")
         }
-        let mut tiles_kind_counter = vec![0; *tiles.iter().max().unwrap_or(&0) as usize];
-        tiles.iter().for_each(|tile| {
-            if *tile > 0 {
-                tiles_kind_counter[*tile as usize - 1] += 1;
+        let mut tiles_kind_counter = vec![0; *tiles.iter().max().unwrap_or(&0).max(&0) as usize];
+        tiles.iter().for_each(|&tile| {
+            if tile > 0 {
+                tiles_kind_counter[tile as usize - 1] += 1;
             }
         });
+        let state = ProblemState { tiles, score: 0 };
+        let state_helper = ProblemStateHelper { tiles_kind_counter };
         Ok(Self {
             l,
             c,
             v,
-            deleted_blocks: vec![],
-            tiles,
-            score: 0,
-            tiles_kind_counter,
+            state,
+            state_helper,
         })
     }
 
@@ -125,33 +134,41 @@ impl Problem {
         visited.iter_mut().for_each(|v| *v = false);
     }
 
-    fn at(&self, c: &Coordinate) -> Result<&isize, anyhow::Error> {
-        self.tiles
-            .get(c.l * self.c + c.c)
-            .ok_or(anyhow!("Can't get visited at ({:?})", c))
+    fn at(&self, coordinate: &Coordinate) -> Result<&isize, anyhow::Error> {
+        self.state
+            .tiles
+            .get(coordinate.l * self.c + coordinate.c)
+            .ok_or(anyhow!("Can't get visited at ({:?})", coordinate))
     }
 
-    fn at_mut(&mut self, c: &Coordinate) -> Result<&mut isize, anyhow::Error> {
-        self.tiles
-            .get_mut(c.l * self.c + c.c)
-            .ok_or(anyhow!("Can't get visited at ({:?})", c))
+    fn at_mut(&mut self, coordinate: &Coordinate) -> Result<&mut isize, anyhow::Error> {
+        self.state
+            .tiles
+            .get_mut(coordinate.l * self.c + coordinate.c)
+            .ok_or(anyhow!("Can't get visited at ({:?})", coordinate))
     }
 
-    fn neighbours(&self, c: &Coordinate) -> Vec<Coordinate> {
+    fn neighbours(&self, coordinate: &Coordinate) -> Vec<Coordinate> {
         vec![
             Coordinate {
-                l: c.l,
-                c: c.c.saturating_sub(1),
+                l: coordinate.l,
+                c: coordinate.c.saturating_sub(1),
             },
-            Coordinate { l: c.l, c: c.c + 1 },
             Coordinate {
-                l: c.l.saturating_sub(1),
-                c: c.c,
+                l: coordinate.l,
+                c: coordinate.c + 1,
             },
-            Coordinate { l: c.l + 1, c: c.c },
+            Coordinate {
+                l: coordinate.l.saturating_sub(1),
+                c: coordinate.c,
+            },
+            Coordinate {
+                l: coordinate.l + 1,
+                c: coordinate.c,
+            },
         ]
         .into_iter()
-        .filter(|n| *n != *c && n.c < self.c && n.l < self.l)
+        .filter(|n| *n != *coordinate && n.c < self.c && n.l < self.l)
         .collect()
     }
 
@@ -164,8 +181,8 @@ impl Problem {
         Ok(())
     }
 
-    fn delete_tile(&mut self, c: &Coordinate) -> Result<(), anyhow::Error> {
-        Ok(*self.at_mut(c)? = -1)
+    fn delete_tile(&mut self, coordinate: &Coordinate) -> Result<(), anyhow::Error> {
+        Ok(*self.at_mut(coordinate)? = -1)
     }
 
     fn step(
@@ -173,12 +190,15 @@ impl Problem {
         coordinate: &Coordinate,
         visited: &mut Vec<bool>,
     ) -> Result<usize, anyhow::Error> {
+        Self::reset_visited(visited);
+        let tile_value = self.at(&coordinate)?.clone();
         self.delete(coordinate, visited).and_then(|deleted| {
-            if deleted > 1 {
-                self.vertical_slide()?;
-                self.horizontal_slide()?;
-            }
-            Ok(deleted)
+            let score = deleted * (deleted - 1);
+            self.vertical_slide()?;
+            self.horizontal_slide()?;
+            self.state_helper.tiles_kind_counter[tile_value as usize - 1] -= deleted;
+            self.state.score += score;
+            Ok(score)
         })
     }
 
@@ -187,7 +207,6 @@ impl Problem {
         coordinate: &Coordinate,
         visited: &mut Vec<bool>,
     ) -> Result<usize, anyhow::Error> {
-        Self::reset_visited(visited);
         let target = *self.at(coordinate)?;
         self.delete_rec(&coordinate, target, visited)
     }
@@ -308,26 +327,19 @@ impl Problem {
                         }
                     }
                     if block_size != 1 {
-                        deletable_blocks.push((tile, block_size));
+                        deletable_blocks.push(tile);
                     }
                 }
             }
         }
-        // deletable_blocks.sort_by(|l, r| l.1.cmp(&r.1));
-        Ok(deletable_blocks
-            .into_iter()
-            .map(|(block_tile, _)| block_tile)
-            .collect())
+        Ok(deletable_blocks)
     }
 
     fn best_possible_score(&self) -> usize {
-        self.tiles_kind_counter.iter().fold(self.score, |acc, n| {
-            if *n == 0 {
-                acc
-            } else {
-                acc + n * (n - 1)
-            }
-        })
+        self.state_helper
+            .tiles_kind_counter
+            .iter()
+            .fold(0, |acc, n| if *n == 0 { acc } else { acc + n * (n - 1) })
     }
 
     fn solve(&mut self) -> Result<(), anyhow::Error> {
@@ -339,15 +351,20 @@ impl Problem {
     }
 
     fn solve_simple(&mut self) -> Result<(), anyhow::Error> {
-        let mut visited = vec![false; self.tiles.len()];
+        let mut visited = vec![false; self.state.tiles.len()];
+        let mut solution = Solution {
+            deleted_blocks: vec![],
+            score: 0,
+        };
         while let Some(deletable_block) = self.get_deletable_block() {
             let deleted = self.step(&deletable_block, &mut visited)?;
-            self.score += deleted * (deleted - 1);
-            self.deleted_blocks.push(deletable_block);
+            solution.score += deleted * (deleted - 1);
+            solution.deleted_blocks.push(deletable_block);
         }
         println!("{} {} {}", self.l, self.c, self.v);
-        println!("{} {}", self.deleted_blocks.len(), self.score);
-        self.deleted_blocks
+        println!("{} {}", solution.deleted_blocks.len(), solution.score);
+        solution
+            .deleted_blocks
             .iter()
             .for_each(|deleted| println!("{} {}", self.l - deleted.l, deleted.c + 1));
         println!();
@@ -357,36 +374,39 @@ impl Problem {
     fn solve_greater_than_dfs(
         &mut self,
         target: usize,
-        cache: &mut HashSet<(Vec<isize>, usize)>,
-    ) -> Result<Option<Self>, anyhow::Error> {
-        if !cache.insert((self.tiles.clone(), self.score)) {
+        solution: &mut Solution,
+        visited: &mut Vec<bool>,
+        cache: &mut HashSet<ProblemState>,
+    ) -> Result<Option<()>, anyhow::Error> {
+        if cache.contains(&self.state) {
+            return Ok(None);
+        } else {
+            cache.insert(self.state.clone());
+        }
+
+        if solution.score + self.best_possible_score() < target {
             return Ok(None);
         }
 
-        if self.best_possible_score() < target {
-            return Ok(None);
-        }
-
-        if self.score >= target {
-            return Ok(Some(self.clone()));
-        }
-
-        let mut visited = vec![false; self.tiles.len()];
-        let deletable_blocks = self.get_all_deletable_blocks(&mut visited)?;
-        if deletable_blocks.is_empty() {
-            return Ok(None);
-        }
-
-        for deletable_block in deletable_blocks {
+        for deletable_block in self.get_all_deletable_blocks(visited)? {
             let mut new_problem = self.clone();
-            let tile_value = new_problem.at(&deletable_block)?.clone();
-            let deleted = new_problem.step(&deletable_block, &mut visited)?;
-            new_problem.tiles_kind_counter[tile_value as usize - 1] -= deleted;
-            new_problem.deleted_blocks.push(deletable_block);
-            new_problem.score += deleted * (deleted - 1);
-            let solution = new_problem.solve_greater_than_dfs(target, cache)?;
-            if solution.is_some() {
-                return Ok(solution);
+            let score = new_problem.step(&deletable_block, visited)?;
+
+            solution.score += score;
+            solution.deleted_blocks.push(deletable_block);
+
+            if solution.score >= target {
+                return Ok(Some(()));
+            }
+
+            if new_problem
+                .solve_greater_than_dfs(target, solution, visited, cache)?
+                .is_some()
+            {
+                return Ok(Some(()));
+            } else {
+                solution.score -= score;
+                solution.deleted_blocks.pop();
             }
         }
 
@@ -394,80 +414,97 @@ impl Problem {
     }
 
     fn solve_greater_than(&mut self, v: usize) -> Result<(), anyhow::Error> {
+        let mut solution = Solution {
+            score: 0,
+            deleted_blocks: vec![],
+        };
+        let mut visited = vec![false; self.state.tiles.len()];
         let mut cache = HashSet::new();
-        if let Some(solution) = self.solve_greater_than_dfs(v, &mut cache)? {
-            println!("{} {} {}", solution.l, solution.c, solution.v);
-            println!("{} {}", solution.deleted_blocks.len(), solution.score);
-            solution.deleted_blocks.iter().for_each(|deleted| {
-                println!("{} {}", solution.l - deleted.l, deleted.c + 1);
-            });
-            println!();
-        } else {
-            println!("{} {} {}", self.l, self.c, self.v);
-            println!("0 -1");
+        match self.solve_greater_than_dfs(v, &mut solution, &mut visited, &mut cache)? {
+            Some(_) => {
+                println!("{} {} {}", self.l, self.c, self.v);
+                println!("{} {}", solution.deleted_blocks.len(), solution.score);
+                solution.deleted_blocks.iter().for_each(|deleted| {
+                    println!("{} {}", self.l - deleted.l, deleted.c + 1);
+                });
+            }
+            None => {
+                println!("{} {} {}", self.l, self.c, self.v);
+                println!("0 -1");
+            }
         }
+        println!();
         Ok(())
     }
 
-    fn solve_max_dfs_cache(
+    fn solve_max_dfs(
         &mut self,
-        cache: &mut HashMap<(Vec<isize>, usize), Option<Self>>,
-        best: &mut Self,
-    ) -> Result<Option<Self>, anyhow::Error> {
-        if let Some(best_solution) = cache.get(&(self.tiles.clone(), self.score)) {
-            return Ok(best_solution.clone());
+        visited: &mut Vec<bool>,
+        cache: &mut HashMap<ProblemState, Option<Solution>>,
+        best_score_so_far: &mut usize,
+    ) -> Result<Option<Solution>, anyhow::Error> {
+        if let Some(solution) = cache.get(&self.state) {
+            return Ok(solution.clone());
         }
 
-        if self.best_possible_score() <= best.score {
-            cache.insert((self.tiles.clone(), self.score), None);
-            return Ok(None);
-        }
-
-        if self.score > best.score {
-            *best = self.clone();
-        }
-
-        let mut visited = vec![false; self.tiles.len()];
-        let deletable_blocks = self.get_all_deletable_blocks(&mut visited)?;
+        let deletable_blocks = self.get_all_deletable_blocks(visited)?;
         if deletable_blocks.is_empty() {
-            cache.insert((self.tiles.clone(), self.score), Some(self.clone()));
-            return Ok(Some(self.clone()));
+            *best_score_so_far = (*best_score_so_far).max(self.state.score);
+            return Ok(Some(Solution {
+                deleted_blocks: vec![],
+                score: 0,
+            }));
         }
 
         let best_solution = deletable_blocks
             .into_iter()
             .map(
-                |deletable_block| -> Result<Option<Problem>, anyhow::Error> {
+                |deletable_block| -> Result<Option<Solution>, anyhow::Error> {
                     let mut new_problem = self.clone();
-                    let tile_value = new_problem.at(&deletable_block)?.clone();
-                    let deleted = new_problem.step(&deletable_block, &mut visited)?;
-                    new_problem.tiles_kind_counter[tile_value as usize - 1] -= deleted;
-                    new_problem.deleted_blocks.push(deletable_block);
-                    new_problem.score += deleted * (deleted - 1);
-                    new_problem.solve_max_dfs_cache(cache, best)
+                    let score = new_problem.step(&deletable_block, visited)?;
+
+                    if new_problem.state.score + new_problem.best_possible_score()
+                        <= *best_score_so_far
+                    {
+                        return Ok(None);
+                    }
+
+                    if let Some(mut new_problem_solution) =
+                        new_problem.solve_max_dfs(visited, cache, best_score_so_far)?
+                    {
+                        new_problem_solution.score += score;
+                        new_problem_solution.deleted_blocks.push(deletable_block);
+                        Ok(Some(new_problem_solution))
+                    } else {
+                        Ok(None)
+                    }
                 },
             )
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
-            .filter_map(|p| p)
-            .into_iter()
+            .filter_map(|s| s)
             .max_by(|l, r| l.score.cmp(&r.score));
-        cache.insert((self.tiles.clone(), self.score), best_solution.clone());
+        cache.insert(self.state.clone(), best_solution.clone());
         Ok(best_solution)
     }
 
     fn solve_max(&mut self) -> Result<(), anyhow::Error> {
         let mut cache = HashMap::new();
-        let mut best = self.clone();
-        let best = self
-            .solve_max_dfs_cache(&mut cache, &mut best)?
-            .ok_or(anyhow!("solution not found"))?;
+        let mut visited = vec![false; self.state.tiles.len()];
+        let mut best_score_so_far = 0;
+        let solution = self
+            .solve_max_dfs(&mut visited, &mut cache, &mut best_score_so_far)?
+            .ok_or(anyhow!("failed to compute maximum solution"))?;
 
-        println!("{} {} {}", best.l, best.c, best.v);
-        println!("{} {}", best.deleted_blocks.len(), best.score);
-        best.deleted_blocks.iter().for_each(|deleted| {
-            println!("{} {}", best.l - deleted.l, deleted.c + 1);
-        });
+        println!("{} {} {}", self.l, self.c, self.v);
+        println!("{} {}", solution.deleted_blocks.len(), solution.score);
+        solution
+            .deleted_blocks
+            .into_iter()
+            .rev()
+            .for_each(|deleted| {
+                println!("{} {}", self.l - deleted.l, deleted.c + 1);
+            });
         println!();
         Ok(())
     }
