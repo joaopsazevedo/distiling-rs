@@ -192,7 +192,13 @@ impl Problem {
     ) -> Result<usize, anyhow::Error> {
         Self::reset_visited(visited);
         let tile_value = self.at(&coordinate)?.clone();
+        if tile_value <= 0 {
+            bail!("unexpected tile value");
+        }
         self.delete(coordinate, visited).and_then(|deleted| {
+            if deleted == 1 {
+                bail!("expected to delete more than 1 tile");
+            }
             let score = deleted * (deleted - 1);
             self.vertical_slide()?;
             self.horizontal_slide()?;
@@ -282,22 +288,25 @@ impl Problem {
         Ok(())
     }
 
-    fn get_deletable_block(&self) -> Option<Coordinate> {
+    fn get_deletable_block(&self) -> Result<Option<Coordinate>, anyhow::Error> {
         for l in (0..self.l).rev() {
             for c in 0..self.c {
                 let tile = Coordinate { l, c };
-                let tile_value = *self.at(&tile).unwrap();
+                let tile_value = *self.at(&tile)?;
                 if tile_value != -1
                     && self
                         .neighbours(&tile)
                         .into_iter()
-                        .any(|n| *self.at(&n).unwrap() == tile_value)
+                        .map(|n| self.at(&n))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .any(|n| *n == tile_value)
                 {
-                    return Some(tile);
+                    return Ok(Some(tile));
                 }
             }
         }
-        None
+        Ok(None)
     }
 
     fn get_all_deletable_blocks(
@@ -356,7 +365,7 @@ impl Problem {
             deleted_blocks: vec![],
             score: 0,
         };
-        while let Some(deletable_block) = self.get_deletable_block() {
+        while let Some(deletable_block) = self.get_deletable_block()? {
             let deleted = self.step(&deletable_block, &mut visited)?;
             solution.score += deleted * (deleted - 1);
             solution.deleted_blocks.push(deletable_block);
