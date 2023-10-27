@@ -1,5 +1,5 @@
 use crate::Strategy::{Max, Simple};
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt::{Display, Formatter};
@@ -65,9 +65,9 @@ impl Problem {
     where
         I: Iterator<Item = isize>,
     {
-        let l = numbers.next().ok_or(anyhow!("Failed to get L"))?;
-        let c = numbers.next().ok_or(anyhow!("Failed to get C"))?;
-        let v = numbers.next().ok_or(anyhow!("Failed to get v"))?;
+        let l = numbers.next().context("Failed to get L")?;
+        let c = numbers.next().context("Failed to get C")?;
+        let v = numbers.next().context("Failed to get v")?;
         if l <= 0 {
             bail!("Expected a positive L ({})", l)
         }
@@ -111,13 +111,13 @@ impl Problem {
     fn visited_at(&self, coordinate: &Coordinate) -> Result<&bool, anyhow::Error> {
         self.visited
             .get(coordinate.l * self.c + coordinate.c)
-            .ok_or(anyhow!("Can't get visited at ({:?})", coordinate))
+            .with_context(|| format!("Can't get visited at ({:?})", coordinate))
     }
 
     fn visited_at_mut(&mut self, coordinate: &Coordinate) -> Result<&mut bool, anyhow::Error> {
         self.visited
             .get_mut(coordinate.l * self.c + coordinate.c)
-            .ok_or(anyhow!("Can't get visited at ({:?})", coordinate))
+            .with_context(|| format!("Can't get visited at ({:?})", coordinate))
     }
 
     fn reset_visited(&mut self) {
@@ -133,7 +133,7 @@ impl Problem {
             .base
             .tiles
             .get(coordinate.l * self.c + coordinate.c)
-            .ok_or(anyhow!("Can't get visited at ({:?})", coordinate))
+            .with_context(|| format!("Can't get visited at ({:?})", coordinate))
     }
 
     fn at_mut<'a>(
@@ -145,7 +145,7 @@ impl Problem {
             .base
             .tiles
             .get_mut(coordinate.l * self.c + coordinate.c)
-            .ok_or(anyhow!("Can't get visited at ({:?})", coordinate))
+            .with_context(|| format!("Can't get visited at ({:?})", coordinate))
     }
 
     fn neighbours(&self, coordinate: &Coordinate) -> Vec<Coordinate> {
