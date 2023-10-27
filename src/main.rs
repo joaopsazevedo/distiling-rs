@@ -1,5 +1,5 @@
 use crate::Strategy::{Max, Simple};
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, bail, ensure, Context};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt::{Display, Formatter};
@@ -68,12 +68,8 @@ impl Problem {
         let l = numbers.next().context("Failed to get L")?;
         let c = numbers.next().context("Failed to get C")?;
         let v = numbers.next().context("Failed to get v")?;
-        if l <= 0 {
-            bail!("Expected a positive L ({})", l)
-        }
-        if c <= 0 {
-            bail!("Expected a positive C ({})", c)
-        }
+        ensure!(l > 0, "Expected a positive L ({})", l);
+        ensure!(c > 0, "Expected a positive C ({})", c);
         let l = l as usize;
         let c = c as usize;
         let v = match v {
@@ -83,9 +79,7 @@ impl Problem {
             _ => bail!("Expected a v ({}) equal to -3, -1 or positive", v),
         };
         let tiles = numbers.take(c * l).collect::<Vec<_>>();
-        if tiles.len() < c * l {
-            bail!("Invalid problem definition")
-        }
+        ensure!(tiles.len() == c * l, "Invalid problem definition");
         let mut tiles_kind_counter = vec![0; *tiles.iter().max().unwrap_or(&0).max(&0) as usize];
         tiles.iter().for_each(|&tile| {
             if tile > 0 {
@@ -192,13 +186,9 @@ impl Problem {
     ) -> Result<usize, anyhow::Error> {
         self.reset_visited();
         let tile_value = self.at(state, coordinate)?.clone();
-        if tile_value <= 0 {
-            bail!("unexpected tile value");
-        }
+        ensure!(tile_value > 0, "unexpected tile value");
         self.delete(state, coordinate).and_then(|deleted| {
-            if deleted == 1 {
-                bail!("expected to delete more than 1 tile");
-            }
+            ensure!(deleted > 1, "expected to delete more than 1 tile");
             let score = deleted * (deleted - 1);
             self.vertical_slide(state)?;
             self.horizontal_slide(state)?;
@@ -527,11 +517,9 @@ impl Problem {
 fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 2 {
-        bail!("Invalid arguments");
-    }
+    ensure!(args.len() == 2, "Invalid arguments");
 
-    let input_filename = args.get(1).ok_or(anyhow!("Invalid arguments"))?;
+    let input_filename = args.get(1).context("Invalid arguments")?;
     let mut file = File::open(input_filename)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
